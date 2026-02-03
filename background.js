@@ -128,7 +128,7 @@ function getLanguageName(code) {
 }
 
 // Generate JWT token for GLM API
-function generateGLMToken(apiKey) {
+async function generateGLMToken(apiKey) {
   // GLM API key format: id.secret
   const parts = apiKey.split('.');
   if (parts.length !== 2) {
@@ -145,15 +145,19 @@ function generateGLMToken(apiKey) {
     timestamp: now
   };
 
-  // Simple JWT implementation for browser
+  // JWT header
   const header = {
     alg: 'HS256',
     sign_type: 'SIGN'
   };
 
-  // Base64URL encode function
+  // Base64URL encode function (handles Unicode properly)
   function base64UrlEncode(str) {
-    return btoa(str)
+    // Convert string to UTF-8 bytes
+    const utf8Bytes = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+      return String.fromCharCode('0x' + p1);
+    });
+    return btoa(utf8Bytes)
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=/g, '');
@@ -163,33 +167,32 @@ function generateGLMToken(apiKey) {
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
 
-  // Create signature
+  // Create signature data
   const data = `${encodedHeader}.${encodedPayload}`;
 
-  // For HMAC-SHA256, we use Web Crypto API
-  async function sign(data, secret) {
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const messageData = encoder.encode(data);
+  // Generate HMAC-SHA256 signature using Web Crypto API
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const messageData = encoder.encode(data);
 
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
 
-    const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
-    const signatureArray = Array.from(new Uint8Array(signature));
-    const signatureString = btoa(String.fromCharCode.apply(null, signatureArray));
-    return signatureString.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  }
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
 
-  // Return a promise that resolves to the JWT
-  return sign(data, secret).then(signature => {
-    return `${data}.${signature}`;
-  });
+  // Convert signature to base64url
+  const signatureArray = Array.from(new Uint8Array(signature));
+  const signatureString = btoa(String.fromCharCode.apply(null, signatureArray))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+
+  return `${data}.${signatureString}`;
 }
 
 // Generate summary using GLM API
