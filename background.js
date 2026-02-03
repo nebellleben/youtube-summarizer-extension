@@ -127,14 +127,79 @@ function getLanguageName(code) {
   return languages[code] || 'English';
 }
 
-// Generate summary using Anthropic Claude API
-async function generateSummary(transcript, videoId, apiKey, settings = {}) {
+// Generate JWT token for GLM API
+function generateGLMToken(apiKey) {
+  // GLM API key format: id.secret
+  const parts = apiKey.split('.');
+  if (parts.length !== 2) {
+    throw new Error('Invalid GLM API key format. Expected: id.secret');
+  }
+
+  const [id, secret] = parts;
+
+  // Create JWT payload
+  const now = Date.now();
+  const payload = {
+    api_key: id,
+    exp: now + 3600 * 1000, // 1 hour expiration
+    timestamp: now
+  };
+
+  // Simple JWT implementation for browser
+  const header = {
+    alg: 'HS256',
+    sign_type: 'SIGN'
+  };
+
+  // Base64URL encode function
+  function base64UrlEncode(str) {
+    return btoa(str)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+  }
+
+  // Encode header and payload
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+
+  // Create signature
+  const data = `${encodedHeader}.${encodedPayload}`;
+
+  // For HMAC-SHA256, we use Web Crypto API
+  async function sign(data, secret) {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const messageData = encoder.encode(data);
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+    const signatureArray = Array.from(new Uint8Array(signature));
+    const signatureString = btoa(String.fromCharCode.apply(null, signatureArray));
+    return signatureString.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  // Return a promise that resolves to the JWT
+  return sign(data, secret).then(signature => {
+    return `${data}.${signature}`;
+  });
+}
+
+// Generate summary using GLM API
+async function generateSummaryGLM(transcript, videoId, apiKey, settings = {}) {
   if (!transcript) {
     throw new Error('Could not fetch transcript for this video');
   }
 
-  // Truncate transcript if too long (Claude has limits)
-  const maxChars = 100000; // Conservative limit
+  // Truncate transcript if too long
+  const maxChars = 100000;
   let trimmedTranscript = transcript;
   if (transcript.length > maxChars) {
     trimmedTranscript = transcript.substring(0, maxChars) + '...';
@@ -166,7 +231,83 @@ Here is the transcript:
 
 ${trimmedTranscript}`;
 
-  const model = settings.model || 'claude-sonnet-4-20250514';
+  const model = settings.glmModel || 'glm-4-flash';
+
+  try {
+    // Generate JWT token
+    const token = await generateGLMToken(apiKey);
+
+    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 4000,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error?.message || error.message || 'GLM API request failed');
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    throw new Error(`GLM API error: ${error.message}`);
+  }
+}
+
+// Generate summary using Anthropic Claude API
+async function generateSummaryAnthropic(transcript, videoId, apiKey, settings = {}) {
+  if (!transcript) {
+    throw new Error('Could not fetch transcript for this video');
+  }
+
+  // Truncate transcript if too long (Claude has limits)
+  const maxChars = 100000;
+  let trimmedTranscript = transcript;
+  if (transcript.length > maxChars) {
+    trimmedTranscript = transcript.substring(0, maxChars) + '...';
+  }
+
+  const language = settings.summaryLanguage || 'zh-TW';
+  const languageName = getLanguageName(language);
+  const includeTimestamps = settings.includeTimestamps !== undefined ? settings.includeTimestamps : true;
+
+  let timestampInstruction = includeTimestamps ?
+    '2. Key discussion points with approximate timestamps (use [MM:SS] or [HH:MM:SS] format)' :
+    '2. Key discussion points in chronological order';
+
+  const prompt = `Please analyze this YouTube video transcript and provide a comprehensive summary in ${languageName}.
+
+Your summary should include:
+1. A title that reflects the main topic
+${timestampInstruction}
+3. Main ideas and conclusions
+4. Around 600-800 words total
+
+Format your response in markdown with:
+- ## Headers for sections
+- **Bold** for key terms
+- - Bullet points for lists
+${includeTimestamps ? '- [MM:SS] or [HH:MM:SS] format for timestamps when applicable' : ''}
+
+Here is the transcript:
+
+${trimmedTranscript}`;
+
+  const model = settings.anthropicModel || 'claude-sonnet-4-20250514';
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -236,24 +377,43 @@ async function testLocalServer(serverUrl) {
 
 // Handle summarize action
 async function handleSummarize(request) {
-  const { videoId, apiKey, ...otherSettings } = request;
-
-  if (!apiKey) {
-    throw new Error('API key is required. Please set your Anthropic API key in the extension options.');
-  }
-
-  if (!videoId) {
-    throw new Error('Could not extract video ID from the current page');
-  }
+  const { videoId } = request;
 
   // Get all settings
   const settings = await chrome.storage.local.get([
-    'model',
+    'apiProvider',
+    'anthropicKey',
+    'anthropicModel',
+    'glmKey',
+    'glmModel',
+    'apiKey',  // legacy
+    'model',   // legacy
     'summaryLanguage',
     'includeTimestamps',
     'useLocalServer',
     'localServerUrl'
   ]);
+
+  // Determine API provider
+  const provider = settings.apiProvider || 'anthropic';
+
+  // Get API key based on provider (with legacy support)
+  let apiKey = null;
+  if (provider === 'glm') {
+    apiKey = settings.glmKey;
+    if (!apiKey) {
+      throw new Error('Zhipu AI API key is required. Please set it in Options.');
+    }
+  } else {
+    apiKey = settings.anthropicKey || settings.apiKey;
+    if (!apiKey) {
+      throw new Error('API key is required. Please set it in Options.');
+    }
+  }
+
+  if (!videoId) {
+    throw new Error('Could not extract video ID from the current page');
+  }
 
   // Fetch transcript
   const transcript = await fetchTranscript(videoId);
@@ -262,8 +422,13 @@ async function handleSummarize(request) {
     throw new Error('Could not fetch transcript. The video may not have captions available, or the local server is not running.');
   }
 
-  // Generate summary
-  const summary = await generateSummary(transcript, videoId, apiKey, settings);
+  // Generate summary based on provider
+  let summary;
+  if (provider === 'glm') {
+    summary = await generateSummaryGLM(transcript, videoId, apiKey, settings);
+  } else {
+    summary = await generateSummaryAnthropic(transcript, videoId, apiKey, settings);
+  }
 
   // Get video title from storage or fetch it
   let title = 'YouTube Video Summary';

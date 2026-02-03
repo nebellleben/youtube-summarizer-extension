@@ -19,9 +19,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('Error getting current tab:', e);
   }
 
-  // Check if API key is stored
-  const { apiKey } = await chrome.storage.local.get(['apiKey']);
-  if (!apiKey) {
+  // Check if API key is stored for current provider
+  async function hasApiKey() {
+    const settings = await chrome.storage.local.get(['apiProvider', 'anthropicKey', 'glmKey', 'apiKey']);
+    const provider = settings.apiProvider || 'anthropic';
+
+    if (provider === 'glm') {
+      return !!settings.glmKey;
+    } else {
+      // Check for legacy apiKey or new anthropicKey
+      return !!(settings.anthropicKey || settings.apiKey);
+    }
+  }
+
+  // Show API key section if not configured
+  if (!(await hasApiKey())) {
     apiKeySection.classList.remove('hidden');
   }
 
@@ -118,10 +130,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Check for API key
-    const stored = await chrome.storage.local.get(['apiKey']);
-    if (!stored.apiKey) {
-      showError('Please set your API key first');
-      apiKeySection.classList.remove('hidden');
+    if (!(await hasApiKey())) {
+      showError('Please set your API key first in Options');
       return;
     }
 
@@ -134,7 +144,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const response = await chrome.runtime.sendMessage({
         action: 'summarize',
         videoId: videoId,
-        apiKey: stored.apiKey,
         url: currentTab.url
       });
 
@@ -180,12 +189,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Save API key
+  // Save API key (legacy - now redirects to options)
   saveApiKeyBtn.addEventListener('click', async () => {
     const key = apiKeyInput.value.trim();
     if (key) {
+      // Save as legacy key for backward compatibility
       await chrome.storage.local.set({ apiKey: key });
-      showSuccess('API key saved!');
+      showSuccess('API key saved! For full configuration, visit Options.');
       apiKeySection.classList.add('hidden');
     } else {
       showError('Please enter a valid API key');
