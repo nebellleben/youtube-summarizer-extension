@@ -1,0 +1,290 @@
+/* YouTube Summarizer Extension - Content Script Styles */
+
+/* Sidebar Overlay */
+.yt-ai-sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+  z-index: 9998;
+}
+
+.yt-ai-sidebar-open .yt-ai-sidebar-overlay {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Sidebar Panel */
+.yt-ai-sidebar-panel {
+  position: fixed;
+  top: 0;
+  right: -450px;
+  width: 420px;
+  max-width: 90vw;
+  height: 100%;
+  background: #f9f9f9;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.2);
+  transition: right 0.3s ease;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+.yt-ai-sidebar-open .yt-ai-sidebar-panel {
+  right: 0;
+}
+
+@media (max-width: 480px) {
+  .yt-ai-sidebar-panel {
+    width: 100%;
+    max-width: 100%;
+    right: -100%;
+  }
+}
+
+/* Sidebar Header */
+.yt-ai-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.yt-ai-sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.yt-ai-sidebar-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  color: white;
+}
+
+.yt-ai-sidebar-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Sidebar Content */
+.yt-ai-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* Custom Scrollbar */
+.yt-ai-sidebar-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.yt-ai-sidebar-content::-webkit-scrollbar-track {
+  background: #e0e0e0;
+}
+
+.yt-ai-sidebar-content::-webkit-scrollbar-thumb {
+  background: #999;
+  border-radius: 4px;
+}
+
+.yt-ai-sidebar-content::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+/* Loading State */
+.yt-ai-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #666;
+}
+
+.yt-ai-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e0e0e0;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: yt-ai-spin 0.8s linear infinite;
+}
+
+@keyframes yt-ai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.yt-ai-loading p {
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+/* Summary Content */
+.yt-ai-summary-content {
+  line-height: 1.7;
+}
+
+.yt-ai-copy-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 20px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  margin-bottom: 20px;
+}
+
+.yt-ai-copy-all:hover {
+  background: #5568d3;
+}
+
+.yt-ai-summary-text {
+  color: #333;
+  font-size: 14px;
+}
+
+.yt-ai-summary-text h1,
+.yt-ai-summary-text h2,
+.yt-ai-summary-text h3 {
+  margin-top: 20px;
+  margin-bottom: 12px;
+  color: #222;
+  font-weight: 600;
+}
+
+.yt-ai-summary-text h1 {
+  font-size: 22px;
+  border-bottom: 2px solid #667eea;
+  padding-bottom: 8px;
+}
+
+.yt-ai-summary-text h2 {
+  font-size: 18px;
+}
+
+.yt-ai-summary-text h3 {
+  font-size: 16px;
+}
+
+.yt-ai-summary-text p {
+  margin-bottom: 16px;
+}
+
+.yt-ai-summary-text ul {
+  margin: 12px 0;
+  padding-left: 24px;
+}
+
+.yt-ai-summary-text li {
+  margin-bottom: 8px;
+}
+
+.yt-ai-summary-text a {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.yt-ai-summary-text a:hover {
+  text-decoration: underline;
+}
+
+.yt-ai-summary-text strong {
+  font-weight: 600;
+  color: #222;
+}
+
+/* Timestamp Styling */
+.yt-ai-timestamp {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  background: white;
+  border-radius: 8px;
+  border-left: 3px solid #667eea;
+  transition: box-shadow 0.2s ease;
+}
+
+.yt-ai-timestamp:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.yt-ai-timestamp .time {
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  color: #667eea;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.yt-ai-timestamp .text {
+  flex: 1;
+  color: #444;
+}
+
+/* Hide sidebar container when not in use */
+#yt-ai-summarizer-sidebar {
+  display: block;
+}
+
+/* Dark mode support for YouTube dark theme */
+html[dark] .yt-ai-sidebar-panel,
+ytd-app[dark] .yt-ai-sidebar-panel {
+  background: #1a1a1a;
+}
+
+html[dark] .yt-ai-summary-text,
+ytd-app[dark] .yt-ai-summary-text {
+  color: #e0e0e0;
+}
+
+html[dark] .yt-ai-summary-text h1,
+html[dark] .yt-ai-summary-text h2,
+html[dark] .yt-ai-summary-text h3,
+ytd-app[dark] .yt-ai-summary-text h1,
+ytd-app[dark] .yt-ai-summary-text h2,
+ytd-app[dark] .yt-ai-summary-text h3 {
+  color: #fff;
+}
+
+html[dark] .yt-ai-summary-text strong,
+ytd-app[dark] .yt-ai-summary-text strong {
+  color: #fff;
+}
+
+html[dark] .yt-ai-timestamp,
+ytd-app[dark] .yt-ai-timestamp {
+  background: #2a2a2a;
+}
+
+html[dark] .yt-ai-timestamp .text,
+ytd-app[dark] .yt-ai-timestamp .text {
+  color: #c0c0c0;
+}

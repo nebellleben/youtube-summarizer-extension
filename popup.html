@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Summarizer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 350px;
+      min-height: 400px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .container {
+      padding: 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .logo {
+      width: 60px;
+      height: 60px;
+      background: white;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 12px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+
+    .logo svg {
+      width: 35px;
+      height: 35px;
+    }
+
+    h1 {
+      color: white;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .status-box {
+      background: rgba(255,255,255,0.95);
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 15px;
+    }
+
+    .video-info {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .video-thumb {
+      width: 80px;
+      height: 45px;
+      background: #f0f0f0;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #999;
+      flex-shrink: 0;
+    }
+
+    .video-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+
+    .video-details {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .video-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .video-id {
+      font-size: 11px;
+      color: #888;
+    }
+
+    .button {
+      width: 100%;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .button-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .button-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+
+    .button-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .button-secondary {
+      background: white;
+      color: #667eea;
+      margin-top: 10px;
+    }
+
+    .button-secondary:hover {
+      background: #f8f9ff;
+    }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .message {
+      background: rgba(255,255,255,0.95);
+      border-radius: 12px;
+      padding: 15px;
+      margin-top: 15px;
+    }
+
+    .message-error {
+      background: #fee;
+      color: #c33;
+      border-left: 4px solid #c33;
+    }
+
+    .message-success {
+      background: #efe;
+      color: #3c3;
+      border-left: 4px solid #3c3;
+    }
+
+    .message-text {
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .api-key-section {
+      background: rgba(255,255,255,0.95);
+      border-radius: 12px;
+      padding: 15px;
+      margin-top: 15px;
+    }
+
+    .api-key-section label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 8px;
+    }
+
+    .api-key-section input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .api-key-section input:focus {
+      border-color: #667eea;
+    }
+
+    .api-key-note {
+      font-size: 10px;
+      color: #888;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .options-link {
+      text-align: center;
+      margin-top: 15px;
+    }
+
+    .options-link a {
+      color: white;
+      font-size: 12px;
+      text-decoration: underline;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM10 16.5V7.5L16 12L10 16.5Z" fill="#667eea"/>
+        </svg>
+      </div>
+      <h1>YouTube Summarizer</h1>
+    </div>
+
+    <div class="status-box">
+      <div class="video-info">
+        <div class="video-thumb" id="videoThumb">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#ccc">
+            <path d="M10 16.5V7.5L16 12L10 16.5Z"/>
+          </svg>
+        </div>
+        <div class="video-details">
+          <div class="video-title" id="videoTitle">Loading...</div>
+          <div class="video-id" id="videoId">Detecting video...</div>
+        </div>
+      </div>
+    </div>
+
+    <button class="button button-primary" id="summarizeBtn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2ZM16 18H8V16H16V18ZM16 14H8V12H16V14ZM13 9V3.5L18.5 9H13Z" fill="white"/>
+      </svg>
+      <span>Generate Summary</span>
+    </button>
+
+    <button class="button button-secondary hidden" id="openSidebarBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+      </svg>
+      <span>Open Summary Sidebar</span>
+    </button>
+
+    <div class="message message-error hidden" id="errorMessage">
+      <div class="message-text"></div>
+    </div>
+
+    <div class="message message-success hidden" id="successMessage">
+      <div class="message-text"></div>
+    </div>
+
+    <div class="api-key-section hidden" id="apiKeySection">
+      <label for="apiKey">Anthropic API Key</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-...">
+      <div class="api-key-note">Your API key is stored locally in your browser. Get your key at <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></div>
+      <button class="button button-primary" id="saveApiKey" style="margin-top: 12px; padding: 10px;">Save API Key</button>
+    </div>
+
+    <div class="options-link">
+      <a href="#" id="openOptions">Options</a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

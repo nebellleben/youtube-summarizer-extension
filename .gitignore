@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (if any)
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# API keys (security)
+*.env
+.env.local
+
+# Logs
+*.log
+
+# Extension specific
+*.crx
+*.pem
