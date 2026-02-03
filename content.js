@@ -13,12 +13,107 @@ function getVideoInfoFromPage() {
 
   // Get video title from page
   const titleElement = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.ytd-video-primary-info-renderer');
-  const title = titleElement ? titleElement.textContent.trim : '';
+  const title = titleElement ? titleElement.textContent.trim() : '';
 
   // Get thumbnail
   const thumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 
   return { videoId, title, thumbnail };
+}
+
+// Extract transcript directly from YouTube page
+async function getTranscriptFromPage() {
+  try {
+    // Method 1: Check if transcript button exists and click it
+    const showTranscriptButton = Array.from(document.querySelectorAll('button')).find(btn =>
+      btn.textContent.includes('Show transcript') || btn.textContent.includes('Show transcript')
+    );
+
+    if (showTranscriptButton) {
+      // Click to open transcript panel
+      showTranscriptButton.click();
+
+      // Wait for transcript to load
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Extract transcript text from the panel
+      const transcriptSegments = document.querySelectorAll('#segments-container ytd-transcript-section-renderer');
+      if (transcriptSegments.length > 0) {
+        let transcript = '';
+        transcriptSegments.forEach(segment => {
+          const textElement = segment.querySelector('.segment-text');
+          if (textElement) {
+            transcript += textElement.textContent + ' ';
+          }
+        });
+
+        // Close transcript panel
+        const closeBtn = document.querySelector('button[aria-label="Close"], button.yt-spec-button-shape-next--tonal');
+        if (closeBtn) closeBtn.click();
+
+        if (transcript.length > 100) {
+          return transcript;
+        }
+      }
+    }
+
+    // Method 2: Parse from ytInitialPlayerResponse
+    const playerResponse = document.getElementById('initial-data')?.textContent;
+    if (playerResponse) {
+      const data = JSON.parse(playerResponse);
+      const captions = data?.contents?.twoColumnWatchNextResults?.results?.results?.contents?.[0]?.videoPrimaryInfoRenderer?.captionTracks;
+
+      if (captions && captions.renderer) {
+        // Find the baseUrl for captions
+        const baseUrl = captions.renderer?.baseUrl;
+        if (baseUrl) {
+          // Fetch the transcript using the baseUrl (this works because we're on the same domain)
+          const response = await fetch(baseUrl + '&fmt=json3');
+          const data = await response.json();
+
+          if (data.events) {
+            return data.events
+              .filter(e => e.segs)
+              .map(e => e.segs.map(s => s.utf8).join(''))
+              .join(' ');
+          }
+        }
+      }
+    }
+
+    // Method 3: Try to get from ytInitialPlayerResponse global variable
+    if (window.ytInitialPlayerResponse) {
+      const tracks = window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (tracks && tracks.length > 0) {
+        const baseUrl = tracks[0].baseUrl;
+        const response = await fetch(baseUrl + '&fmt=json3');
+        const data = await response.json();
+
+        if (data.events) {
+          return data.events
+            .filter(e => e.segs)
+            .map(e => e.segs.map(s => s.utf8).join(''))
+            .join(' ');
+        }
+      }
+    }
+
+    // Method 4: Try to extract from the page using the hidden ytm-player-response
+    const playerResponseTag = document.querySelector('ytm-player-response, #player-response');
+    if (playerResponseTag) {
+      const scriptContent = playerResponseTag.textContent || playerResponseTag.innerText;
+      // Try to extract transcript from the JSON
+      const match = scriptContent.match(/\"captions\":\{[^}]*\"captionTracks\":\[[^\]]*\]/);
+      if (match) {
+        // This would need more parsing, return null for now
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error extracting transcript:', error);
+    return null;
+  }
 }
 
 // Create sidebar element
@@ -182,6 +277,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getVideoInfo') {
     const info = getVideoInfoFromPage();
     sendResponse(info);
+    return true;
+  }
+
+  if (request.action === 'getTranscript') {
+    getTranscriptFromPage().then(transcript => {
+      sendResponse({ transcript });
+    });
     return true;
   }
 

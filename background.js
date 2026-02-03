@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // Fetch transcript using multiple methods
-async function fetchTranscript(videoId) {
+async function fetchTranscript(videoId, tabId = null) {
   // Check cache first
   if (transcriptCache.has(videoId)) {
     return transcriptCache.get(videoId);
@@ -18,31 +18,45 @@ async function fetchTranscript(videoId) {
 
   let transcript = null;
 
-  // Get settings
-  const settings = await chrome.storage.local.get(['useLocalServer', 'localServerUrl']);
-  const useLocalServer = settings.useLocalServer !== undefined ? settings.useLocalServer : true;
-  const localServerUrl = settings.localServerUrl || DEFAULT_SETTINGS.localServerUrl;
-
-  // Method 1: Try local server (most reliable if available)
-  if (useLocalServer) {
+  // Method 0: Try content script extraction (most reliable - works within YouTube page)
+  if (tabId) {
     try {
-      const response = await fetch(`${localServerUrl}/api/transcript`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ video_id: videoId })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data && data.transcript) {
-          transcript = data.transcript;
-          console.log('Transcript fetched from local server');
-        }
+      const response = await chrome.tabs.sendMessage(tabId, { action: 'getTranscript' });
+      if (response && response.transcript) {
+        transcript = response.transcript;
+        console.log('Transcript extracted from page');
       }
     } catch (e) {
-      console.log('Local server not available, trying fallback methods:', e.message);
+      console.log('Content script extraction failed:', e.message);
+    }
+  }
+
+  // Method 1: Try local server (if available)
+  if (!transcript) {
+    const settings = await chrome.storage.local.get(['useLocalServer', 'localServerUrl']);
+    const useLocalServer = settings.useLocalServer !== undefined ? settings.useLocalServer : true;
+    const localServerUrl = settings.localServerUrl || DEFAULT_SETTINGS.localServerUrl;
+
+    if (useLocalServer) {
+      try {
+        const response = await fetch(`${localServerUrl}/api/transcript`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ video_id: videoId })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.transcript) {
+            transcript = data.transcript;
+            console.log('Transcript fetched from local server');
+          }
+        }
+      } catch (e) {
+        console.log('Local server not available, trying fallback methods:', e.message);
+      }
     }
   }
 
@@ -380,7 +394,7 @@ async function testLocalServer(serverUrl) {
 
 // Handle summarize action
 async function handleSummarize(request) {
-  const { videoId } = request;
+  const { videoId, tabId } = request;
 
   // Get all settings
   const settings = await chrome.storage.local.get([
@@ -418,8 +432,8 @@ async function handleSummarize(request) {
     throw new Error('Could not extract video ID from the current page');
   }
 
-  // Fetch transcript
-  const transcript = await fetchTranscript(videoId);
+  // Fetch transcript (pass tabId for content script extraction)
+  const transcript = await fetchTranscript(videoId, tabId);
 
   if (!transcript) {
     throw new Error('Could not fetch transcript. The video may not have captions available, or the local server is not running.');

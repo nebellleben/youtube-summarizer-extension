@@ -144,6 +144,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const response = await chrome.runtime.sendMessage({
         action: 'summarize',
         videoId: videoId,
+        tabId: currentTab.id,
         url: currentTab.url
       });
 
