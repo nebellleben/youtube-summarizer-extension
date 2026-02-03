@@ -5,113 +5,131 @@ let isSidebarOpen = false;
 
 // Get video info from page
 function getVideoInfoFromPage() {
-  // Try to get video ID from URL
   const urlParams = new URLSearchParams(window.location.search);
   const videoId = urlParams.get('v');
 
   if (!videoId) return null;
 
-  // Get video title from page
   const titleElement = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.ytd-video-primary-info-renderer');
   const title = titleElement ? titleElement.textContent.trim() : '';
 
-  // Get thumbnail
-  const thumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
-
-  return { videoId, title, thumbnail };
+  return { videoId, title, thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` };
 }
 
-// Extract transcript directly from YouTube page
+// Extract transcript directly from YouTube page using multiple methods
 async function getTranscriptFromPage() {
   try {
-    // Method 1: Check if transcript button exists and click it
-    const showTranscriptButton = Array.from(document.querySelectorAll('button')).find(btn =>
-      btn.textContent.includes('Show transcript') || btn.textContent.includes('Show transcript')
-    );
+    console.log('[YouTube Summarizer] Attempting to extract transcript...');
 
-    if (showTranscriptButton) {
-      // Click to open transcript panel
-      showTranscriptButton.click();
+    // Method 1: Use ytInitialPlayerResponse global variable (most reliable)
+    if (window.ytInitialPlayerResponse) {
+      console.log('[YouTube Summarizer] Found ytInitialPlayerResponse');
 
-      // Wait for transcript to load
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const tracks = window.ytInitialPlayerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (tracks && tracks.length > 0) {
+        console.log('[YouTube Summarizer] Found caption tracks:', tracks.map(t => t.languageCode));
 
-      // Extract transcript text from the panel
-      const transcriptSegments = document.querySelectorAll('#segments-container ytd-transcript-section-renderer');
-      if (transcriptSegments.length > 0) {
-        let transcript = '';
-        transcriptSegments.forEach(segment => {
-          const textElement = segment.querySelector('.segment-text');
-          if (textElement) {
-            transcript += textElement.textContent + ' ';
-          }
-        });
+        // Use the first available track (prefer manual/auto)
+        const track = tracks.find(t => t.kind !== 'asr') || tracks[0];
+        const baseUrl = track.baseUrl;
 
-        // Close transcript panel
-        const closeBtn = document.querySelector('button[aria-label="Close"], button.yt-spec-button-shape-next--tonal');
-        if (closeBtn) closeBtn.click();
-
-        if (transcript.length > 100) {
-          return transcript;
-        }
-      }
-    }
-
-    // Method 2: Parse from ytInitialPlayerResponse
-    const playerResponse = document.getElementById('initial-data')?.textContent;
-    if (playerResponse) {
-      const data = JSON.parse(playerResponse);
-      const captions = data?.contents?.twoColumnWatchNextResults?.results?.results?.contents?.[0]?.videoPrimaryInfoRenderer?.captionTracks;
-
-      if (captions && captions.renderer) {
-        // Find the baseUrl for captions
-        const baseUrl = captions.renderer?.baseUrl;
         if (baseUrl) {
-          // Fetch the transcript using the baseUrl (this works because we're on the same domain)
+          console.log('[YouTube Summarizer] Fetching transcript from:', baseUrl.substring(0, 50) + '...');
+
           const response = await fetch(baseUrl + '&fmt=json3');
           const data = await response.json();
 
           if (data.events) {
-            return data.events
+            const transcript = data.events
               .filter(e => e.segs)
               .map(e => e.segs.map(s => s.utf8).join(''))
               .join(' ');
+
+            console.log('[YouTube Summarizer] Successfully extracted transcript, length:', transcript.length);
+            return transcript;
           }
         }
+      } else {
+        console.log('[YouTube Summarizer] No caption tracks found in ytInitialPlayerResponse');
       }
+    } else {
+      console.log('[YouTube Summarizer] ytInitialPlayerResponse not found');
     }
 
-    // Method 3: Try to get from ytInitialPlayerResponse global variable
-    if (window.ytInitialPlayerResponse) {
-      const tracks = window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (tracks && tracks.length > 0) {
-        const baseUrl = tracks[0].baseUrl;
-        const response = await fetch(baseUrl + '&fmt=json3');
-        const data = await response.json();
+    // Method 2: Parse from script tags in the page
+    const scripts = document.querySelectorAll('script');
+    for (const script of scripts) {
+      const content = script.textContent;
+      if (content && content.includes('captionTracks')) {
+        try {
+          // Extract the JSON part
+          const match = content.match(/\"captionTracks\":\s*\[([^\]]+)\]/);
+          if (match) {
+            const baseUrlMatch = match[1].match(/\"baseUrl\":\s*\"([^\"]+)\"/);
+            if (baseUrlMatch) {
+              let baseUrl = baseUrlMatch[1].replace(/\\u0026/g, '&');
+              console.log('[YouTube Summarizer] Found baseUrl in script tag');
 
-        if (data.events) {
-          return data.events
-            .filter(e => e.segs)
-            .map(e => e.segs.map(s => s.utf8).join(''))
-            .join(' ');
+              const response = await fetch(baseUrl + '&fmt=json3');
+              const data = await response.json();
+
+              if (data.events) {
+                const transcript = data.events
+                  .filter(e => e.segs)
+                  .map(e => e.segs.map(s => s.utf8).join(''))
+                  .join(' ');
+
+                console.log('[YouTube Summarizer] Successfully extracted transcript from script, length:', transcript.length);
+                return transcript;
+              }
+            }
+          }
+        } catch (e) {
+          // Continue to next script
         }
       }
     }
 
-    // Method 4: Try to extract from the page using the hidden ytm-player-response
-    const playerResponseTag = document.querySelector('ytm-player-response, #player-response');
-    if (playerResponseTag) {
-      const scriptContent = playerResponseTag.textContent || playerResponseTag.innerText;
-      // Try to extract transcript from the JSON
-      const match = scriptContent.match(/\"captions\":\{[^}]*\"captionTracks\":\[[^\]]*\]/);
-      if (match) {
-        // This would need more parsing, return null for now
+    // Method 3: Try to click and extract from transcript panel
+    const showMoreBtns = Array.from(document.querySelectorAll('button, yt-button-shape')).filter(el => {
+      const text = el.textContent.toLowerCase();
+      return text.includes('transcript') || text.includes('show transcript');
+    });
+
+    if (showMoreBtns.length > 0) {
+      console.log('[YouTube Summarizer] Found transcript button, clicking...');
+      showMoreBtns[0].click();
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Try to extract from panel
+      const segments = document.querySelectorAll('#segments-container ytd-transcript-section-renderer, [class*="transcript-segment"]');
+      if (segments.length > 0) {
+        let transcript = '';
+        segments.forEach(seg => {
+          const text = seg.querySelector('.segment-text, [class*="segment-text"], [class*="text"]');
+          if (text) transcript += text.textContent + ' ';
+        });
+
+        // Close panel
+        const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"]');
+        if (closeBtn) closeBtn.click();
+
+        if (transcript.length > 100) {
+          console.log('[YouTube Summarizer] Extracted from transcript panel, length:', transcript.length);
+          return transcript;
+        }
       }
+
+      // Close panel
+      const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"], top-nav-button #close-button');
+      if (closeBtn) closeBtn.click();
     }
 
+    console.log('[YouTube Summarizer] All transcript extraction methods failed');
     return null;
   } catch (error) {
-    console.error('Error extracting transcript:', error);
+    console.error('[YouTube Summarizer] Error extracting transcript:', error);
     return null;
   }
 }
@@ -149,49 +167,34 @@ function createSidebar() {
 
   document.body.appendChild(sidebarContainer);
 
-  // Add event listeners
   const overlay = sidebarContainer.querySelector('.yt-ai-sidebar-overlay');
   const closeBtn = sidebarContainer.querySelector('.yt-ai-sidebar-close');
 
   overlay.addEventListener('click', closeSidebar);
   closeBtn.addEventListener('click', closeSidebar);
 
-  // Escape key to close
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isSidebarOpen) {
-      closeSidebar();
-    }
+    if (e.key === 'Escape' && isSidebarOpen) closeSidebar();
   });
 
   return sidebarContainer;
 }
 
-// Show sidebar with content
 function showSidebar(summary, title = '') {
   const sidebar = createSidebar();
   const content = sidebar.querySelector('.yt-ai-sidebar-content');
 
-  // Update header title if available
   if (title) {
     const titleEl = sidebar.querySelector('.yt-ai-sidebar-title span');
     if (titleEl) titleEl.textContent = title.length > 30 ? title.substring(0, 30) + '...' : title;
   }
 
-  // Set content
-  content.innerHTML = `
-    <div class="yt-ai-summary-content">
-      ${formatSummary(summary)}
-    </div>
-  `;
-
+  content.innerHTML = `<div class="yt-ai-summary-content">${formatSummary(summary)}</div>`;
   sidebar.classList.add('yt-ai-sidebar-open');
   isSidebarOpen = true;
-
-  // Add copy buttons to code blocks if any
   addCopyButtons();
 }
 
-// Close sidebar
 function closeSidebar() {
   if (sidebarContainer) {
     sidebarContainer.classList.remove('yt-ai-sidebar-open');
@@ -199,47 +202,29 @@ function closeSidebar() {
   }
 }
 
-// Format summary content
 function formatSummary(summary) {
   if (!summary) return '<p>No summary available.</p>';
 
-  // Convert markdown-like formatting to HTML
   let html = summary
-
-    // Headers
     .replace(/^### (.*$)/gm, '<h3>$1</h3>')
     .replace(/^## (.*$)/gm, '<h2>$1</h2>')
     .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-
-    // Bold
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-
-    // Italic
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
-
-    // Links
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-
-    // Unordered lists
     .replace(/^\- (.*$)/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-
-    // Ordered lists with timestamps
     .replace(/^\[\s?(\d+):(\d+)\]\s?(.*$)/gm, '<div class="yt-ai-timestamp"><span class="time">[$1:$2]</span> <span class="text">$3</span></div>')
-
-    // Line breaks and paragraphs
     .replace(/\n\n/g, '</p><p>')
     .replace(/\n/g, '<br>');
 
   return `<div class="yt-ai-summary-text">${html}</div>`;
 }
 
-// Add copy buttons to content
 function addCopyButtons() {
   const content = document.querySelector('.yt-ai-summary-content');
   if (!content) return;
 
-  // Add copy all button
   const copyBtn = document.createElement('button');
   copyBtn.className = 'yt-ai-copy-all';
   copyBtn.innerHTML = `
@@ -250,33 +235,28 @@ function addCopyButtons() {
   `;
 
   copyBtn.addEventListener('click', () => {
-    const text = content.innerText;
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(content.innerText).then(() => {
       copyBtn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="#4CAF50">
           <path d="M9 16.17L4.83 12L3.41 13.41L9 19L21 7L19.59 5.59L9 16.17Z"/>
         </svg>
         Copied!
       `;
-      setTimeout(() => {
-        copyBtn.innerHTML = `
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z"/>
-          </svg>
-          Copy Summary
-        `;
-      }, 2000);
+      setTimeout(() => copyBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z"/>
+        </svg>
+        Copy Summary
+      `, 2000);
     });
   });
 
   content.insertBefore(copyBtn, content.firstChild);
 }
 
-// Listen for messages from popup and background
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getVideoInfo') {
-    const info = getVideoInfoFromPage();
-    sendResponse(info);
+    sendResponse(getVideoInfoFromPage());
     return true;
   }
 
@@ -300,12 +280,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Initialize on page load
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    // Pre-initialize sidebar element but keep hidden
-    createSidebar();
-  });
+  document.addEventListener('DOMContentLoaded', () => createSidebar());
 } else {
   createSidebar();
 }
