@@ -28,33 +28,60 @@ if (window.ytSummarizerLoaded) {
     try {
       console.log('[YouTube Summarizer] Attempting to extract transcript...');
 
-      // Wait for ytInitialPlayerResponse to be available (up to 10 seconds)
-      let attempts = 0;
-      const maxAttempts = 100;
-      while (!window.ytInitialPlayerResponse && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        attempts++;
-        if (attempts % 10 === 0) {
-          console.log('[YouTube Summarizer] Still waiting for ytInitialPlayerResponse... (' + attempts + ' attempts)');
+      // Try to find ytInitialPlayerResponse in different locations
+      let playerData = null;
+
+      // Method 1: Check window.ytInitialPlayerResponse (direct)
+      if (window.ytInitialPlayerResponse) {
+        console.log('[YouTube Summarizer] Found ytInitialPlayerResponse on window');
+        playerData = window.ytInitialPlayerResponse;
+      }
+
+      // Method 2: Check in ytcfg.data
+      if (!playerData && window.ytcfg && window.ytcfg.data) {
+        const ytData = window.ytcfg.data;
+        console.log('[YouTube Summarizer] Found ytcfg.data');
+        // The player response might be embedded here
+        const playerId = Object.keys(ytData).find(k => k.startsWith('PLAYER'));
+        if (playerId) {
+          playerData = ytData[playerId];
+          console.log('[YouTube Summarizer] Found player data in ytcfg');
         }
       }
 
-      console.log('[YouTube Summarizer] ytInitialPlayerResponse check:', window.ytInitialPlayerResponse ? 'found' : 'not found after waiting');
+      // Method 3: Parse from all script tags to find ytInitialPlayerResponse
+      if (!playerData) {
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          const content = script.textContent;
+          if (content && content.includes('ytInitialPlayerResponse')) {
+            try {
+              // Extract the JSON - it's usually: var ytInitialPlayerResponse = {...};
+              const match = content.match(/var ytInitialPlayerResponse\s*=\s*({.+?});/s);
+              if (match) {
+                playerData = JSON.parse(match[1]);
+                console.log('[YouTube Summarizer] Found ytInitialPlayerResponse in script tag');
+                break;
+              }
+            } catch (e) {
+              // Continue searching
+            }
+          }
+        }
+      }
 
-      // Method 1: Use ytInitialPlayerResponse global variable (most reliable)
-      if (window.ytInitialPlayerResponse) {
-        console.log('[YouTube Summarizer] Found ytInitialPlayerResponse');
-
-        const tracks = window.ytInitialPlayerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      // Method 4: Parse from script tags looking for captionTracks directly
+      if (playerData) {
+        const tracks = playerData.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         if (tracks && tracks.length > 0) {
-          console.log('[YouTube Summarizer] Found caption tracks:', tracks.map(t => t.languageCode));
+          console.log('[YouTube Summarizer] Found caption tracks:', tracks.map(t => t.languageCode || 'unknown'));
 
-          // Use the first available track (prefer manual/auto)
-          const track = tracks.find(t => t.kind !== 'asr') || tracks[0];
+          // Use the first available track
+          const track = tracks[0];
           const baseUrl = track.baseUrl;
 
           if (baseUrl) {
-            console.log('[YouTube Summarizer] Fetching transcript from:', baseUrl.substring(0, 50) + '...');
+            console.log('[YouTube Summarizer] Fetching transcript...');
 
             const response = await fetch(baseUrl + '&fmt=json3');
             const data = await response.json();
@@ -70,79 +97,85 @@ if (window.ytSummarizerLoaded) {
             }
           }
         } else {
-          console.log('[YouTube Summarizer] No caption tracks found in ytInitialPlayerResponse');
+          console.log('[YouTube Summarizer] No caption tracks found in player data');
         }
-      } else {
-        console.log('[YouTube Summarizer] ytInitialPlayerResponse not found');
       }
 
-      // Method 2: Parse from script tags in the page
-      const scripts = document.querySelectorAll('script');
-      for (const script of scripts) {
-        const content = script.textContent;
-        if (content && content.includes('captionTracks')) {
-          try {
-            // Extract the JSON part
-            const match = content.match(/"captionTracks":\s*\[([^\]]+)\]/);
-            if (match) {
-              const baseUrlMatch = match[1].match(/"baseUrl":\s*"([^"]+)"/);
-              if (baseUrlMatch) {
-                let baseUrl = baseUrlMatch[1].replace(/\\u0026/g, '&');
-                console.log('[YouTube Summarizer] Found baseUrl in script tag');
+      // Method 5: Try to extract baseUrl directly from HTML
+      if (!playerData) {
+        console.log('[YouTube Summarizer] Trying to extract from HTML...');
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          const content = script.textContent;
+          if (content && content.includes('"baseUrl"') && content.includes('"kind"')) {
+            try {
+              // Find all baseUrls in caption tracks
+              const baseUrlMatches = content.matchAll(/"baseUrl":\s*"([^"]+)"/g);
+              for (const match of baseUrlMatches) {
+                const baseUrl = match[1].replace(/\\u0026/g, '&');
+                if (baseUrl.includes('timedtext') || baseUrl.includes('caption')) {
+                  console.log('[YouTube Summarizer] Found caption URL, trying...');
 
-                const response = await fetch(baseUrl + '&fmt=json3');
-                const data = await response.json();
+                  try {
+                    const response = await fetch(baseUrl + '&fmt=json3');
+                    const data = await response.json();
 
-                if (data.events) {
-                  const transcript = data.events
-                    .filter(e => e.segs)
-                    .map(e => e.segs.map(s => s.utf8).join(''))
-                    .join(' ');
+                    if (data.events && data.events.length > 0) {
+                      const transcript = data.events
+                        .filter(e => e.segs)
+                        .map(e => e.segs.map(s => s.utf8).join(''))
+                        .join(' ');
 
-                  console.log('[YouTube Summarizer] Successfully extracted transcript from script, length:', transcript.length);
-                  return transcript;
+                      console.log('[YouTube Summarizer] Successfully extracted transcript from URL, length:', transcript.length);
+                      return transcript;
+                    }
+                  } catch (e) {
+                    // Try next URL
+                  }
                 }
               }
+            } catch (e) {
+              // Continue searching
             }
-          } catch (e) {
-            // Continue to next script
           }
         }
       }
 
-      // Method 3: Try to click and extract from transcript panel
-      const showMoreBtns = Array.from(document.querySelectorAll('button, yt-button-shape')).filter(el => {
+      // Method 6: Try transcript button
+      const transcriptButton = Array.from(document.querySelectorAll('button, yt-button-shape, tp-yt-paper-button')).find(el => {
         const text = el.textContent.toLowerCase();
-        return text.includes('transcript') || text.includes('show transcript');
+        return text.includes('transcript') || text.includes('show transcript') || text.includes('字幕');
       });
 
-      if (showMoreBtns.length > 0) {
+      if (transcriptButton) {
         console.log('[YouTube Summarizer] Found transcript button, clicking...');
-        showMoreBtns[0].click();
+        transcriptButton.click();
 
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         // Try to extract from panel
-        const segments = document.querySelectorAll('#segments-container ytd-transcript-section-renderer, [class*="transcript-segment"]');
+        const segments = document.querySelectorAll('ytd-transcript-section-renderer, .caption-line, .caption-visual-line');
         if (segments.length > 0) {
           let transcript = '';
           segments.forEach(seg => {
-            const text = seg.querySelector('.segment-text, [class*="segment-text"], [class*="text"]');
-            if (text) transcript += text.textContent + ' ';
+            const text = seg.textContent || seg.innerText;
+            if (text && text.length > 2 && !text.includes('Ads')) {
+              transcript += text + ' ';
+            }
           });
 
           // Close panel
-          const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"]');
+          const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"], .yt-spec-button-shape-next--tonal');
           if (closeBtn) closeBtn.click();
 
-          if (transcript.length > 100) {
+          if (transcript.length > 200) {
             console.log('[YouTube Summarizer] Extracted from transcript panel, length:', transcript.length);
             return transcript;
           }
         }
 
         // Close panel
-        const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"], top-nav-button #close-button');
+        const closeBtn = document.querySelector('button[aria-label*="Close"], button[title*="Close"]');
         if (closeBtn) closeBtn.click();
       }
 
