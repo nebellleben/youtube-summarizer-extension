@@ -28,6 +28,16 @@ if (window.ytSummarizerLoaded) {
     try {
       console.log('[YouTube Summarizer] Attempting to extract transcript...');
 
+      // Wait for ytInitialPlayerResponse to be available (up to 5 seconds)
+      let attempts = 0;
+      const maxAttempts = 50;
+      while (!window.ytInitialPlayerResponse && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+
+      console.log('[YouTube Summarizer] ytInitialPlayerResponse check:', window.ytInitialPlayerResponse ? 'found' : 'not found after waiting');
+
       // Method 1: Use ytInitialPlayerResponse global variable (most reliable)
       if (window.ytInitialPlayerResponse) {
         console.log('[YouTube Summarizer] Found ytInitialPlayerResponse');

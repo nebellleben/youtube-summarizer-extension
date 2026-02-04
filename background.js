@@ -411,8 +411,8 @@ async function handleSummarize(request) {
         files: ['content.js']
       });
       console.log('[YouTube Summarizer] Content script injected/refreshed');
-      // Wait a bit for the script to initialize
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for YouTube to be fully loaded
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (e) {
       console.log('[YouTube Summarizer] Content script injection note:', e.message);
     }
