@@ -25,11 +25,11 @@ async function fetchTranscript(videoId, tabId = null) {
       console.log('[YouTube Summarizer] Requesting transcript from content script, tabId:', tabId);
       const response = await chrome.tabs.sendMessage(tabId, { action: 'getTranscript' });
       console.log('[YouTube Summarizer] Content script response:', response);
-      if (response && response.transcript) {
+      if (response && response.transcript && response.transcript.length > 100) {
         transcript = response.transcript;
         console.log('[YouTube Summarizer] Transcript extracted from page, length:', transcript.length);
       } else {
-        console.log('[YouTube Summarizer] Content script returned no transcript');
+        console.log('[YouTube Summarizer] Content script returned no transcript (length:', response?.transcript?.length || 0, ')');
       }
     } catch (e) {
       console.log('[YouTube Summarizer] Content script extraction failed:', e.message);
@@ -402,6 +402,21 @@ async function testLocalServer(serverUrl) {
 // Handle summarize action
 async function handleSummarize(request) {
   const { videoId, tabId } = request;
+
+  // Ensure content script is injected
+  if (tabId) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content.js']
+      });
+      console.log('[YouTube Summarizer] Content script injected/refreshed');
+      // Wait a bit for the script to initialize
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (e) {
+      console.log('[YouTube Summarizer] Content script injection note:', e.message);
+    }
+  }
 
   // Get all settings
   const settings = await chrome.storage.local.get([
