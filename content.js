@@ -28,12 +28,15 @@ if (window.ytSummarizerLoaded) {
     try {
       console.log('[YouTube Summarizer] Attempting to extract transcript...');
 
-      // Wait for ytInitialPlayerResponse to be available (up to 5 seconds)
+      // Wait for ytInitialPlayerResponse to be available (up to 10 seconds)
       let attempts = 0;
-      const maxAttempts = 50;
+      const maxAttempts = 100;
       while (!window.ytInitialPlayerResponse && attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 100));
         attempts++;
+        if (attempts % 10 === 0) {
+          console.log('[YouTube Summarizer] Still waiting for ytInitialPlayerResponse... (' + attempts + ' attempts)');
+        }
       }
 
       console.log('[YouTube Summarizer] ytInitialPlayerResponse check:', window.ytInitialPlayerResponse ? 'found' : 'not found after waiting');
@@ -272,6 +275,11 @@ if (window.ytSummarizerLoaded) {
   }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'ping') {
+      sendResponse({ pong: true });
+      return true;
+    }
+
     if (request.action === 'getVideoInfo') {
       sendResponse(getVideoInfoFromPage());
       return true;

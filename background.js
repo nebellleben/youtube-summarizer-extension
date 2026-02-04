@@ -403,18 +403,17 @@ async function testLocalServer(serverUrl) {
 async function handleSummarize(request) {
   const { videoId, tabId } = request;
 
-  // Ensure content script is injected
+  // Wait a bit and verify content script is ready
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Check if content script is responsive
   if (tabId) {
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        files: ['content.js']
-      });
-      console.log('[YouTube Summarizer] Content script injected/refreshed');
-      // Wait for YouTube to be fully loaded
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await chrome.tabs.sendMessage(tabId, { action: 'ping' });
     } catch (e) {
-      console.log('[YouTube Summarizer] Content script injection note:', e.message);
+      // Content script not loaded, wait and retry
+      console.log('[YouTube Summarizer] Content script not responding, waiting...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
 
