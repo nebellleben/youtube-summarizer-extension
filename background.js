@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
 async function fetchTranscript(videoId, tabId = null) {
   // Check cache first
   if (transcriptCache.has(videoId)) {
+    console.log('[YouTube Summarizer] Using cached transcript');
     return transcriptCache.get(videoId);
   }
 
@@ -21,14 +22,20 @@ async function fetchTranscript(videoId, tabId = null) {
   // Method 0: Try content script extraction (most reliable - works within YouTube page)
   if (tabId) {
     try {
+      console.log('[YouTube Summarizer] Requesting transcript from content script, tabId:', tabId);
       const response = await chrome.tabs.sendMessage(tabId, { action: 'getTranscript' });
+      console.log('[YouTube Summarizer] Content script response:', response);
       if (response && response.transcript) {
         transcript = response.transcript;
-        console.log('Transcript extracted from page');
+        console.log('[YouTube Summarizer] Transcript extracted from page, length:', transcript.length);
+      } else {
+        console.log('[YouTube Summarizer] Content script returned no transcript');
       }
     } catch (e) {
-      console.log('Content script extraction failed:', e.message);
+      console.log('[YouTube Summarizer] Content script extraction failed:', e.message);
     }
+  } else {
+    console.log('[YouTube Summarizer] No tabId provided for content script extraction');
   }
 
   // Method 1: Try local server (if available)
