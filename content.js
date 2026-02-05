@@ -78,22 +78,66 @@ if (window.ytSummarizerLoaded) {
 
           // Use the first available track
           const track = tracks[0];
-          const baseUrl = track.baseUrl;
+          let baseUrl = track.baseUrl;
 
           if (baseUrl) {
-            console.log('[YouTube Summarizer] Fetching transcript...');
+            // Unescape the URL (YouTube escapes special characters)
+            baseUrl = baseUrl.replace(/\\u0026/g, '&')
+                           .replace(/\\u003c/g, '<')
+                           .replace(/\\u003d/g, '=')
+                           .replace(/\\u003f/g, '?')
+                           .replace(/\\\\/g, '');
 
-            const response = await fetch(baseUrl + '&fmt=json3');
-            const data = await response.json();
+            console.log('[YouTube Summarizer] Fetching transcript from:', baseUrl.substring(0, 80) + '...');
 
-            if (data.events) {
-              const transcript = data.events
-                .filter(e => e.segs)
-                .map(e => e.segs.map(s => s.utf8).join(''))
-                .join(' ');
+            try {
+              const response = await fetch(baseUrl + '&fmt=json3');
+              if (!response.ok) {
+                console.log('[YouTube Summarizer] Fetch failed:', response.status);
+                throw new Error('Fetch failed: ' + response.status);
+              }
 
-              console.log('[YouTube Summarizer] Successfully extracted transcript, length:', transcript.length);
-              return transcript;
+              const text = await response.text();
+              if (!text || text.trim() === '') {
+                console.log('[YouTube Summarizer] Empty response from transcript URL');
+                throw new Error('Empty response');
+              }
+
+              const data = JSON.parse(text);
+
+              if (data.events) {
+                const transcript = data.events
+                  .filter(e => e.segs)
+                  .map(e => e.segs.map(s => s.utf8).join(''))
+                  .join(' ');
+
+                console.log('[YouTube Summarizer] Successfully extracted transcript, length:', transcript.length);
+                return transcript;
+              } else {
+                console.log('[YouTube Summarizer] No events in response');
+              }
+            } catch (e) {
+              console.log('[YouTube Summarizer] Fetch/parse error:', e.message);
+              // Try fmt=json instead
+              try {
+                const response2 = await fetch(baseUrl + '&fmt=json');
+                const text2 = await response2.text();
+                const match = text2.match(/"text":\s*"([^"]+)"/g);
+                if (match && match.length > 0) {
+                  const transcript = match.map(m => m.match(/"text":\s*"([^"]+)"/)[1])
+                                                .map(t => t.replace(/\\n/g, '\n')
+                                                        .replace(/\\u0026/g, '&')
+                                                        .replace(/\\u003c/g, '<')
+                                                        .replace(/\\u003e/g, '>')
+                                                        .replace(/\\u0027/g, "'")
+                                                        .replace(/\\\\/g, ''))
+                                                .join(' ');
+                  console.log('[YouTube Summarizer] Extracted using alt method, length:', transcript.length);
+                  return transcript;
+                }
+              } catch (e2) {
+                console.log('[YouTube Summarizer] Alt method also failed:', e2.message);
+              }
             }
           }
         } else {
