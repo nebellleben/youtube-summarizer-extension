@@ -88,6 +88,13 @@ if (window.ytSummarizerLoaded) {
                            .replace(/\\u003f/g, '?')
                            .replace(/\\\\/g, '');
 
+            // Remove problematic parameters that cause expired responses
+            const url = new URL(baseUrl);
+            url.searchParams.delete('ei');  // Remove the request ID
+            url.searchParams.delete('c');   // Remove continuation
+            url.searchParams.delete('sparams');  // Remove signature params
+            baseUrl = url.toString();
+
             console.log('[YouTube Summarizer] Fetching transcript from:', baseUrl.substring(0, 80) + '...');
 
             try {
@@ -118,26 +125,6 @@ if (window.ytSummarizerLoaded) {
               }
             } catch (e) {
               console.log('[YouTube Summarizer] Fetch/parse error:', e.message);
-              // Try fmt=json instead
-              try {
-                const response2 = await fetch(baseUrl + '&fmt=json');
-                const text2 = await response2.text();
-                const match = text2.match(/"text":\s*"([^"]+)"/g);
-                if (match && match.length > 0) {
-                  const transcript = match.map(m => m.match(/"text":\s*"([^"]+)"/)[1])
-                                                .map(t => t.replace(/\\n/g, '\n')
-                                                        .replace(/\\u0026/g, '&')
-                                                        .replace(/\\u003c/g, '<')
-                                                        .replace(/\\u003e/g, '>')
-                                                        .replace(/\\u0027/g, "'")
-                                                        .replace(/\\\\/g, ''))
-                                                .join(' ');
-                  console.log('[YouTube Summarizer] Extracted using alt method, length:', transcript.length);
-                  return transcript;
-                }
-              } catch (e2) {
-                console.log('[YouTube Summarizer] Alt method also failed:', e2.message);
-              }
             }
           }
         } else {
@@ -145,7 +132,42 @@ if (window.ytSummarizerLoaded) {
         }
       }
 
-      // Method 5: Try to extract baseUrl directly from HTML
+      // Method 5: Try using the lang parameter directly
+      if (!playerData) {
+        console.log('[YouTube Summarizer] Trying direct YouTube timedtext API...');
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoId = urlParams.get('v');
+
+        // Try multiple languages
+        const langs = ['en', 'en-US', 'en-GB'];
+        for (const lang of langs) {
+          try {
+            const directUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
+            console.log('[YouTube Summarizer] Trying direct URL for lang:', lang);
+
+            const response = await fetch(directUrl);
+            if (response.ok) {
+              const text = await response.text();
+              if (text && text.trim() !== '') {
+                const data = JSON.parse(text);
+                if (data.events && data.events.length > 0) {
+                  const transcript = data.events
+                    .filter(e => e.segs)
+                    .map(e => e.segs.map(s => s.utf8).join(''))
+                    .join(' ');
+
+                  console.log('[YouTube Summarizer] Successfully extracted via direct API, length:', transcript.length);
+                  return transcript;
+                }
+              }
+            }
+          } catch (e) {
+            // Try next language
+          }
+        }
+      }
+
+      // Method 6: Try to extract baseUrl directly from HTML
       if (!playerData) {
         console.log('[YouTube Summarizer] Trying to extract from HTML...');
         const scripts = document.querySelectorAll('script');
@@ -185,7 +207,7 @@ if (window.ytSummarizerLoaded) {
         }
       }
 
-      // Method 6: Try transcript button
+      // Method 7: Try transcript button
       const transcriptButton = Array.from(document.querySelectorAll('button, yt-button-shape, tp-yt-paper-button')).find(el => {
         const text = el.textContent.toLowerCase();
         return text.includes('transcript') || text.includes('show transcript') || text.includes('字幕');
