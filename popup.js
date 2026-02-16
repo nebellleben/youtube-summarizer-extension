@@ -162,11 +162,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         // Inject sidebar into current page
-        await chrome.tabs.sendMessage(currentTab.id, {
-          action: 'showSidebar',
-          summary: response.summary,
-          title: response.title || ''
-        });
+        try {
+          await chrome.tabs.sendMessage(currentTab.id, {
+            action: 'showSidebar',
+            summary: response.summary,
+            title: response.title || ''
+          });
+        } catch (e) {
+          console.error('[YouTube Summarizer] Failed to show sidebar:', e);
+          showError('Summary generated but could not display. Try refreshing the page.');
+        }
       }
     } catch (e) {
       console.error('Error:', e);

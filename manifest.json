@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "YouTube Video Summarizer",
-  "version": "1.0.0",
+  "version": "1.7.0",
   "description": "Get AI-powered summaries of YouTube videos with transcripts",
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "webRequest"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",

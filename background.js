@@ -3,14 +3,92 @@
 // Cache for transcripts to avoid re-fetching
 const transcriptCache = new Map();
 
+// Store for intercepted caption responses
+const interceptedCaptions = new Map();
+
 // Default settings
 const DEFAULT_SETTINGS = {
   localServerUrl: 'http://127.0.0.1:5000',
   useLocalServer: true
 };
 
+// Set up webRequest listener for intercepting caption requests
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    // Only intercept requests from YouTube pages
+    if (details.tabId < 0) return;
+
+    const url = details.url;
+    // Check if this is a caption/timedtext request
+    if (url.includes('youtube.com/api/timedtext') || url.includes('timedtext')) {
+      console.log('[YouTube Summarizer] Intercepting caption request:', url.substring(0, 100));
+      // We'll capture the response in onCompleted
+    }
+  },
+  {
+    urls: ['*://*.youtube.com/api/timedtext*']
+  },
+  ['requestBody']
+);
+
+// Capture caption responses
+chrome.webRequest.onCompleted.addListener(
+  async (details) => {
+    if (details.tabId < 0) return;
+
+    const url = details.url;
+    // Check if this is a caption/timedtext request
+    if (url.includes('youtube.com/api/timedtext') || url.includes('timedtext')) {
+      console.log('[YouTube Summarizer] Caption request completed:', url.substring(0, 100));
+
+      try {
+        // Fetch the response body
+        const response = await fetch(url);
+        if (response.ok) {
+          const text = await response.text();
+          if (text && text.trim().startsWith('{') && !text.includes('<')) {
+            // Parse and store the caption data
+            const data = JSON.parse(text);
+            if (data.events && data.events.length > 0) {
+              const transcript = data.events
+                .filter(e => e.segs)
+                .map(e => e.segs.map(s => s.utf8).join(''))
+                .join(' ');
+
+              if (transcript.length > 10) {
+                // Extract video ID from URL
+                const videoIdMatch = url.match(/[?&]v=([^&]+)/);
+                if (videoIdMatch) {
+                  const videoId = videoIdMatch[1];
+                  const isAuto = url.includes('caps=asr') || url.includes('kind=asr');
+                  const lang = url.match(/[?&]lang=([^&]+)/)?.[1] || 'unknown';
+
+                  console.log(`[YouTube Summarizer] Captured transcript via webRequest: ${videoId}, length: ${transcript.length}, lang: ${lang}${isAuto ? ' [AUTO]' : ''}`);
+
+                  // Store in cache
+                  transcriptCache.set(videoId, transcript);
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log('[YouTube Summarizer] Failed to capture caption response:', e.message);
+      }
+    }
+  },
+  {
+    urls: ['*://*.youtube.com/api/timedtext*']
+  },
+  ['responseHeaders']
+);
+
 // Fetch transcript using multiple methods
 async function fetchTranscript(videoId, tabId = null) {
+  console.log('[YouTube Summarizer] ===== STARTING TRANSCRIPT FETCH =====');
+  console.log('[YouTube Summarizer] Video ID:', videoId);
+  console.log('[YouTube Summarizer] Tab ID:', tabId);
+
   // Check cache first
   if (transcriptCache.has(videoId)) {
     console.log('[YouTube Summarizer] Using cached transcript');
@@ -22,17 +100,47 @@ async function fetchTranscript(videoId, tabId = null) {
   // Method 0: Try content script extraction (most reliable - works within YouTube page)
   if (tabId) {
     try {
+      console.log('[YouTube Summarizer] ===== METHOD 0: Content Script Extraction =====');
       console.log('[YouTube Summarizer] Requesting transcript from content script, tabId:', tabId);
-      const response = await chrome.tabs.sendMessage(tabId, { action: 'getTranscript' });
-      console.log('[YouTube Summarizer] Content script response:', response);
+
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Content script request timeout')), 15000)
+      );
+
+      const response = await Promise.race([
+        chrome.tabs.sendMessage(tabId, { action: 'getTranscript' }),
+        timeoutPromise
+      ]);
+
+      console.log('[YouTube Summarizer] ===== Content script response received =====');
+      console.log('[YouTube Summarizer] Response:', response);
+      console.log('[YouTube Summarizer] Response type:', typeof response);
+      console.log('[YouTube Summarizer] Response is null:', response === null);
+      console.log('[YouTube Summarizer] Response is undefined:', response === undefined);
+      if (response) {
+        console.log('[YouTube Summarizer] Response keys:', Object.keys(response));
+        console.log('[YouTube Summarizer] Response has transcript:', 'transcript' in response);
+        console.log('[YouTube Summarizer] Response has error:', 'error' in response);
+        console.log('[YouTube Summarizer] Transcript length:', response.transcript?.length || 'N/A');
+        console.log('[YouTube Summarizer] Error message:', response.error || 'N/A');
+      }
+      if (response?.error) {
+        console.log('[YouTube Summarizer] Content script error:', response.error);
+      }
       if (response && response.transcript && response.transcript.length > 100) {
         transcript = response.transcript;
-        console.log('[YouTube Summarizer] Transcript extracted from page, length:', transcript.length);
+        console.log('[YouTube Summarizer] ===== SUCCESS: Transcript extracted from page, length:', transcript.length);
+      } else if (response && response.transcript && response.transcript.length > 10) {
+        // Accept shorter transcripts (might be from short videos)
+        transcript = response.transcript;
+        console.log('[YouTube Summarizer] ===== SUCCESS: Short transcript accepted, length:', transcript.length);
       } else {
-        console.log('[YouTube Summarizer] Content script returned no transcript (length:', response?.transcript?.length || 0, ')');
+        console.log('[YouTube Summarizer] ===== FAILED: Content script returned no valid transcript =====');
       }
     } catch (e) {
-      console.log('[YouTube Summarizer] Content script extraction failed:', e.message);
+      console.log('[YouTube Summarizer] ===== FAILED: Content script extraction failed:', e.message);
+      console.log('[YouTube Summarizer] Error stack:', e.stack);
     }
   } else {
     console.log('[YouTube Summarizer] No tabId provided for content script extraction');
@@ -40,40 +148,130 @@ async function fetchTranscript(videoId, tabId = null) {
 
   // Method 1: Try local server (if available)
   if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 1: Local Server =====');
     const settings = await chrome.storage.local.get(['useLocalServer', 'localServerUrl']);
     const useLocalServer = settings.useLocalServer !== undefined ? settings.useLocalServer : true;
     const localServerUrl = settings.localServerUrl || DEFAULT_SETTINGS.localServerUrl;
 
+    console.log('[YouTube Summarizer] Local server enabled:', useLocalServer);
+    console.log('[YouTube Summarizer] Local server URL:', localServerUrl);
+
     if (useLocalServer) {
       try {
-        const response = await fetch(`${localServerUrl}/api/transcript`, {
+        const serverUrl = `${localServerUrl}/api/transcript`;
+        console.log('[YouTube Summarizer] Trying local server:', serverUrl);
+        const response = await fetch(serverUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ video_id: videoId })
         });
+        console.log('[YouTube Summarizer] Local server response:', response.status, response.statusText);
 
         if (response.ok) {
           const data = await response.json();
           if (data && data.transcript) {
             transcript = data.transcript;
-            console.log('Transcript fetched from local server');
+            console.log('[YouTube Summarizer] ===== SUCCESS: Transcript fetched from local server, length:', transcript.length);
           }
         }
       } catch (e) {
-        console.log('Local server not available, trying fallback methods:', e.message);
+        console.log('[YouTube Summarizer] ===== METHOD 1 FAILED: Local server not available:', e.message);
       }
+    } else {
+      console.log('[YouTube Summarizer] ===== METHOD 1 SKIPPED: Local server disabled');
     }
   }
 
   // Method 2: YouTube timedtext API (direct from YouTube)
   if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 2: YouTube Timedtext API =====');
+    // Try multiple languages including auto-generated captions
+    const langs = ['en', 'en-US', 'en-GB', 'zh-CN', 'zh-TW', 'ja', 'ko', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ar', 'hi', 'th', 'vi', 'id'];
+
+    for (const lang of langs) {
+      try {
+        // First try regular captions
+        const apiUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
+        console.log(`[YouTube Summarizer] Trying API for ${lang}: ${apiUrl}`);
+        const response = await fetch(apiUrl);
+        console.log(`[YouTube Summarizer] Response status for ${lang}:`, response.status, response.statusText);
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[YouTube Summarizer] Data for ${lang}:`, data ? JSON.stringify(data).substring(0, 200) + '...' : 'null');
+          if (data && data.events) {
+            transcript = data.events
+              .filter(e => e.segs)
+              .map(e => e.segs.map(s => s.utf8).join(''))
+              .join(' ');
+            console.log(`[YouTube Summarizer] ===== SUCCESS: Transcript fetched from YouTube timedtext API (${lang}), length:`, transcript.length);
+            break;
+          } else {
+            console.log(`[YouTube Summarizer] No events in data for ${lang}`);
+          }
+        }
+      } catch (e) {
+        console.log(`[YouTube Summarizer] YouTube timedtext API failed for ${lang}:`, e.message);
+      }
+    }
+    if (!transcript) {
+      console.log('[YouTube Summarizer] ===== METHOD 2 FAILED: No transcript from regular captions');
+    }
+  }
+
+  // Method 2.5: Try auto-generated captions specifically
+  if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 2.5: Auto-Generated Captions =====');
+    const autoLangs = ['en', 'en-US', 'en-GB', 'zh-CN', 'zh-TW', 'zh-HK', 'ja', 'ko', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ar', 'hi', 'th', 'vi', 'id'];
+    for (const lang of autoLangs) {
+      try {
+        // Auto-generated captions use caps=asr parameter
+        const autoUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3&caps=asr`;
+        console.log(`[YouTube Summarizer] Trying auto-caption API for ${lang}: ${autoUrl}`);
+        const response = await fetch(autoUrl);
+        console.log(`[YouTube Summarizer] Auto-caption response status for ${lang}:`, response.status, response.statusText);
+
+        if (response.ok) {
+          const text = await response.text();
+          console.log(`[YouTube Summarizer] Auto-caption response text length for ${lang}:`, text?.length || 0);
+          console.log(`[YouTube Summarizer] Auto-caption response starts with '{':`, text?.trim()?.startsWith('{'));
+          // Check if response is valid JSON (not HTML error page)
+          if (text && !text.includes('<') && text.trim().startsWith('{')) {
+            const data = await response.json();
+            console.log(`[YouTube Summarizer] Auto-caption data for ${lang}:`, data ? 'has data' : 'null');
+            if (data && data.events) {
+              transcript = data.events
+                .filter(e => e.segs)
+                .map(e => e.segs.map(s => s.utf8).join(''))
+                .join(' ');
+              console.log(`[YouTube Summarizer] ===== SUCCESS: Transcript fetched from YouTube auto-generated captions (${lang}), length:`, transcript.length);
+              break;
+            } else {
+              console.log(`[YouTube Summarizer] No events in auto-caption data for ${lang}`);
+            }
+          } else {
+            console.log(`[YouTube Summarizer] Auto-caption response is not valid JSON for ${lang}`);
+          }
+        }
+      } catch (e) {
+        console.log(`[YouTube Summarizer] YouTube auto-caption API failed for ${lang}:`, e.message);
+      }
+    }
+    if (!transcript) {
+      console.log('[YouTube Summarizer] ===== METHOD 2.5 FAILED: No transcript from auto-captions');
+    }
+  }
+
+  // Method 3: Alternative method for YouTube captions (embed API)
+  if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 3: Embed API =====');
     try {
-      // Try to get transcript using YouTube's internal API
-      const response = await fetch(
-        `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3`
-      );
+      const embedUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3&kind=asr`;
+      console.log('[YouTube Summarizer] Trying embed API:', embedUrl);
+      const response = await fetch(embedUrl);
+      console.log('[YouTube Summarizer] Embed API response:', response.status, response.statusText);
 
       if (response.ok) {
         const data = await response.json();
@@ -82,42 +280,154 @@ async function fetchTranscript(videoId, tabId = null) {
             .filter(e => e.segs)
             .map(e => e.segs.map(s => s.utf8).join(''))
             .join(' ');
-          console.log('Transcript fetched from YouTube timedtext API');
+          console.log('[YouTube Summarizer] ===== SUCCESS: Transcript fetched from YouTube embed API (auto-captions), length:', transcript.length);
         }
       }
     } catch (e) {
-      console.log('YouTube timedtext API failed:', e.message);
+      console.log('[YouTube Summarizer] ===== METHOD 3 FAILED: Embed API failed:', e.message);
     }
   }
 
-  // Method 3: Alternative method for YouTube captions
+  // Method 4: Alternative method - Try transcript from video player directly
   if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 4: Direct Player URL =====');
     try {
-      // This method fetches the raw transcript data
-      const response = await fetch(
-        `https://youtubetranscript.com/?serverUrl=https://www.youtube.com/watch?v=${videoId}`
-      );
+      // Try to get transcript by directly accessing YouTube's player transcript endpoint
+      const playerTranscriptUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3&caps=asr&kind=asr&lang=en`;
+      console.log('[YouTube Summarizer] Trying player transcript URL:', playerTranscriptUrl);
+
+      const response = await fetch(playerTranscriptUrl, {
+        headers: {
+          'Referer': 'https://www.youtube.com/',
+          'Accept': 'application/json'
+        }
+      });
+      console.log('[YouTube Summarizer] Player transcript response:', response.status, response.statusText);
 
       if (response.ok) {
         const text = await response.text();
+        console.log('[YouTube Summarizer] Player transcript response length:', text?.length || 0);
+        console.log('[YouTube Summarizer] Response starts with:', text?.substring(0, 100));
+
+        if (text && text.trim().length > 0 && !text.includes('<')) {
+          try {
+            const data = JSON.parse(text);
+            if (data && data.events && data.events.length > 0) {
+              transcript = data.events
+                .filter(e => e.segs)
+                .map(e => e.segs.map(s => s.utf8).join(''))
+                .join(' ');
+              console.log('[YouTube Summarizer] ===== SUCCESS: Transcript fetched from player URL, length:', transcript.length);
+            }
+          } catch (e) {
+            console.log('[YouTube Summarizer] Player URL JSON parse failed:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[YouTube Summarizer] ===== METHOD 4 FAILED: Player URL failed:', e.message);
+    }
+  }
+
+  // Method 5: Try embedded video page to extract caption info
+  if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 5: Embed Page Method =====');
+    try {
+      const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+      console.log('[YouTube Summarizer] Trying embed page:', embedUrl);
+
+      // Fetch the embed page HTML
+      const response = await fetch(embedUrl);
+      console.log('[YouTube Summarizer] Embed page response:', response.status);
+
+      if (response.ok) {
+        const html = await response.text();
+        console.log('[YouTube Summarizer] Embed page HTML length:', html?.length || 0);
+
+        // Look for ytInitialPlayerResponse in the embed HTML
+        const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*<\/script>/s);
+        if (playerResponseMatch) {
+          try {
+            const playerData = JSON.parse(playerResponseMatch[1]);
+            console.log('[YouTube Summarizer] Found player data in embed page');
+
+            const captionTracks = playerData.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+            if (captionTracks && captionTracks.length > 0) {
+              console.log('[YouTube Summarizer] Found', captionTracks.length, 'caption tracks in embed page');
+
+              for (const track of captionTracks) {
+                if (track.baseUrl) {
+                  try {
+                    const trackUrl = track.baseUrl + (track.baseUrl.includes('?') ? '&' : '?') + 'fmt=json3';
+                    console.log('[YouTube Summarizer] Trying track URL:', trackUrl.substring(0, 100));
+
+                    const trackResponse = await fetch(trackUrl);
+                    if (trackResponse.ok) {
+                      const trackData = await trackResponse.json();
+                      if (trackData.events && trackData.events.length > 0) {
+                        transcript = trackData.events
+                          .filter(e => e.segs)
+                          .map(e => e.segs.map(s => s.utf8).join(''))
+                          .join(' ');
+                        console.log('[YouTube Summarizer] ===== SUCCESS: Transcript fetched from embed page, length:', transcript.length);
+                        break;
+                      }
+                    }
+                  } catch (e) {
+                    console.log('[YouTube Summarizer] Track fetch failed:', e.message);
+                  }
+                }
+                if (transcript) break;
+              }
+            }
+          } catch (e) {
+            console.log('[YouTube Summarizer] Embed page player data parse failed:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[YouTube Summarizer] ===== METHOD 5 FAILED: Embed page failed:', e.message);
+    }
+  }
+
+  // Method 6: Alternative method for YouTube captions (legacy)
+  if (!transcript) {
+    console.log('[YouTube Summarizer] ===== METHOD 4: Legacy API =====');
+    try {
+      const legacyUrl = `https://youtubetranscript.com/?serverUrl=https://www.youtube.com/watch?v=${videoId}`;
+      console.log('[YouTube Summarizer] Trying legacy API:', legacyUrl);
+      const response = await fetch(legacyUrl);
+      console.log('[YouTube Summarizer] Legacy API response:', response.status, response.statusText);
+
+      if (response.ok) {
+        const text = await response.text();
+        console.log('[YouTube Summarizer] Legacy API response length:', text?.length || 0);
         // Try to extract JSON data from the response
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const data = JSON.parse(jsonMatch[0]);
           if (data && data.transcript) {
             transcript = data.transcript.map(item => item.text).join(' ');
-            console.log('Transcript fetched from youtubetranscript.com');
+            console.log('[YouTube Summarizer] ===== SUCCESS: Transcript fetched from youtubetranscript.com, length:', transcript.length);
           }
         }
       }
     } catch (e) {
-      console.log('youtubetranscript.com failed:', e.message);
+      console.log('[YouTube Summarizer] ===== METHOD 4 FAILED: Legacy API failed:', e.message);
     }
   }
 
   if (transcript) {
     transcriptCache.set(videoId, transcript);
+    console.log('[YouTube Summarizer] ===== TRANSCRIPT FETCH SUCCESS =====');
+    console.log('[YouTube Summarizer] Final transcript length:', transcript.length);
+    console.log('[YouTube Summarizer] Cached for video:', videoId);
+  } else {
+    console.log('[YouTube Summarizer] ===== TRANSCRIPT FETCH FAILED =====');
+    console.log('[YouTube Summarizer] All methods exhausted, no transcript available');
+    console.log('[YouTube Summarizer] Video might not have captions or all APIs are blocked');
   }
+  console.log('[YouTube Summarizer] ===== ENDING TRANSCRIPT FETCH =====\n');
 
   return transcript;
 }
@@ -204,16 +514,21 @@ async function generateGLMToken(apiKey) {
     ['sign']
   );
 
-  const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+    const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
 
-  // Convert signature to base64url
-  const signatureArray = Array.from(new Uint8Array(signature));
-  const signatureString = btoa(String.fromCharCode.apply(null, signatureArray))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
+    // Convert signature to base64url safely (avoids stack overflow with large arrays)
+    const signatureArray = Array.from(new Uint8Array(signature));
+    let binaryString = '';
+    const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
+    for (let i = 0; i < signatureArray.length; i += chunkSize) {
+      binaryString += String.fromCharCode.apply(null, signatureArray.slice(i, i + chunkSize));
+    }
+    const signatureString = btoa(binaryString)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
 
-  return `${data}.${signatureString}`;
+    return `${data}.${signatureString}`;
 }
 
 // Generate summary using GLM API
@@ -255,7 +570,7 @@ Here is the transcript:
 
 ${trimmedTranscript}`;
 
-  const model = settings.glmModel || 'glm-4-flash';
+  const model = settings.glmModel || 'glm-4';
 
   try {
     // Generate JWT token
@@ -408,12 +723,26 @@ async function handleSummarize(request) {
 
   // Check if content script is responsive
   if (tabId) {
+    console.log('[YouTube Summarizer] Checking if content script is ready for tab:', tabId);
     try {
       await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+      console.log('[YouTube Summarizer] Content script is responding');
     } catch (e) {
-      // Content script not loaded, wait and retry
-      console.log('[YouTube Summarizer] Content script not responding, waiting...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log('[YouTube Summarizer] Content script not responding:', e.message, '- attempting injection...');
+
+      try {
+        // Try to inject content script
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['content.js']
+        });
+        console.log('[YouTube Summarizer] Content script injected successfully');
+        // Wait for it to initialize
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (injectError) {
+        console.log('[YouTube Summarizer] Could not inject content script:', injectError.message);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
   }
 
@@ -470,16 +799,19 @@ async function handleSummarize(request) {
 
   // Get video title from storage or fetch it
   let title = 'YouTube Video Summary';
+  console.log('[YouTube Summarizer] Fetching video title for summary display...');
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
+      console.log('[YouTube Summarizer] Sending getVideoInfo to tab:', tabs[0].id);
       const response = await chrome.tabs.sendMessage(tabs[0].id, { action: 'getVideoInfo' });
+      console.log('[YouTube Summarizer] Video info response:', response ? 'received' : 'failed');
       if (response && response.title) {
         title = response.title;
       }
     }
   } catch (e) {
-    console.log('Could not get video title:', e.message);
+    console.log('[YouTube Summarizer] Could not get video title:', e.message);
   }
 
   return {
