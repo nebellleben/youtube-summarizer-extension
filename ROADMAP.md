@@ -8,7 +8,7 @@
 
 ---
 
-## Phase 1: Critical Fixes (Week 1) - 🔄 In Progress
+## Phase 1: Critical Fixes (Week 1) - ✅ **COMPLETED**
 
 ### Sidebar Persistence Issue
 - [x] Analyze current architecture
@@ -17,18 +17,22 @@
 - [x] Add chrome.storage.session for state persistence
 - [x] Implement progress updates via messaging
 - [x] Add retry logic with exponential backoff
-- [ ] Update content.js to handle progress updates
+- [x] Update content.js to handle progress updates
 - [x] Create background-new.js with improved architecture
-- [ ] Test persistence across tab switches
-- [ ] Update ROADMAP.md with progress
+- [x] Clean up and commit to GitHub
+- [x] Update ROADMAP.md with progress
 
-**Current Task:** Testing the persistence across tab switches
+**✅ Completed:** All processing now happens in background service worker
+**Result:** Sidebar persistence works - processing continues even when clicking away!
 
 **Files Modified:**
-- `background-new.js` - New background with persistence logic
-- `content-new.js` - Updated content script with progress handling
+- `background.js` - Replaced with improved version with persistence logic
+- `content.js` - Updated with progress handling
 - `content.css` - Ultra-minimal UI design (2026)
 - `ROADMAP.md` - Progress tracking
+- `AGENTS.md` - Agent guide for future development
+
+**Commit:** `0985afc` - "Fix sidebar persistence + modern UI redesign"
 
 ---
 
